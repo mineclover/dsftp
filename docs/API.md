@@ -1,169 +1,130 @@
 # SFTP Manager API Specification
 
-> Framework-agnostic API for Tauri/Electron IPC integration
+> Tauri 2.0 Rust Backend API
 
 ## Overview
 
-Core API는 `core/index.js`에 정의되어 있으며, GUI 프레임워크(Tauri/Electron)의 IPC를 통해 호출됩니다.
+Tauri 백엔드는 `gui/src-tauri/src/lib.rs`에 Rust로 구현되어 있으며, React 프론트엔드에서 `@tauri-apps/api/core`의 `invoke`를 통해 호출합니다.
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   GUI Frontend  │────▶│   IPC Bridge    │────▶│    Core API     │
-│   (React/Vue)   │◀────│ (Tauri/Electron)│◀────│   (Node.js)     │
+│   React Frontend │────▶│   Tauri IPC     │────▶│   Rust Backend  │
+│   (TypeScript)   │◀────│   (invoke)      │◀────│   (Docker API)  │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
 ```
 
-## IPC Commands
+## Tauri Commands
 
 ### Server Management
 
 | Command | Parameters | Returns | Description |
 |---------|-----------|---------|-------------|
-| `create_server` | CreateServerOptions | ServerResult | 새 SFTP 서버 생성 |
-| `list_servers` | - | ServerInfo[] | 모든 서버 목록 |
-| `get_server` | name: string | ServerInfo \| null | 서버 상세 정보 |
-| `start_server` | name: string | Result | 서버 시작 |
-| `stop_server` | name: string | Result | 서버 중지 |
-| `remove_server` | name: string | Result | 서버 삭제 |
-| `start_all_servers` | - | BatchResult | 모든 서버 시작 |
-| `stop_all_servers` | - | BatchResult | 모든 서버 중지 |
-
-### Connection Info
-
-| Command | Parameters | Returns | Description |
-|---------|-----------|---------|-------------|
-| `get_connection_info` | name: string | ConnectionInfo | 접속 정보 |
-| `format_connection_info` | name, format | string | 포맷된 접속 정보 |
+| `create_server` | config: ServerConfig | CommandResult | 새 SFTP 서버 생성 |
+| `list_servers` | - | Vec<ServerInfo> | 모든 서버 목록 |
+| `start_server` | name: String | CommandResult | 서버 시작 |
+| `stop_server` | name: String | CommandResult | 서버 중지 |
+| `remove_server` | name: String | CommandResult | 서버 삭제 |
 
 ### System
 
 | Command | Parameters | Returns | Description |
 |---------|-----------|---------|-------------|
-| `get_system_status` | - | SystemStatus | 시스템 상태 |
-| `get_server_logs` | name, lines? | string | 서버 로그 |
+| `check_docker` | - | bool | Docker 사용 가능 여부 |
+| `get_local_ip` | - | String | 로컬 IP 주소 |
+| `get_container_logs` | name, lines | String | 컨테이너 로그 |
 
 ---
 
 ## Type Definitions
 
-### CreateServerOptions
+### ServerConfig (Frontend → Backend)
 
 ```typescript
-interface CreateServerOptions {
+interface ServerConfig {
   name: string;           // Container name (required)
-  port?: number;          // SFTP port (auto-assigned if empty)
-  hostPath: string;       // Host folder path (required)
-  containerPath?: string; // Container mount path (default: /home/user/files)
+  port: number;           // SFTP port (required)
+  host_path: string;      // Host folder path (required)
+  container_path: string; // Container mount path
   username: string;       // SFTP username (required)
-  password?: string;      // Password (auto-generated if empty)
-  uid?: number;           // User ID (default: 1001)
+  password: string;       // Password (required)
 }
 ```
 
-### ServerInfo
+### ServerInfo (Backend → Frontend)
 
 ```typescript
 interface ServerInfo {
   name: string;
   port: number;
-  hostPath: string;
-  containerPath: string;
+  host_path: string;      // snake_case (Rust convention)
+  container_path: string;
   username: string;
-  password: string;
-  status: 'running' | 'stopped' | 'not created';
-  createdAt: string; // ISO date
+  password: string;       // Loaded from credential store
+  status: 'running' | 'stopped' | 'creating';
 }
 ```
 
-### ConnectionInfo
+### CommandResult
 
 ```typescript
-interface ConnectionInfo {
-  host: string;     // Local IP address
-  port: number;     // SFTP port
-  username: string;
-  password: string;
-  command: string;  // sftp -P port user@host
-  url: string;      // sftp://user:pass@host:port
-}
-```
-
-### Result
-
-```typescript
-interface Result {
+interface CommandResult {
   success: boolean;
   error?: string;
 }
-
-interface ServerResult extends Result {
-  server?: ServerInfo;
-}
-
-interface BatchResult {
-  total: number;
-  success: number;
-  failed: string[];
-}
 ```
 
-### SystemStatus
+---
+
+## Frontend Usage
 
 ```typescript
-interface SystemStatus {
-  docker: boolean;  // Docker available
-  ip: string;       // Local IP
-  configPath: string;
-}
+import { invoke } from '@tauri-apps/api/core';
+
+// List servers
+const servers = await invoke<ServerInfo[]>('list_servers');
+
+// Create server
+const result = await invoke<CommandResult>('create_server', { config });
+
+// Start/Stop/Remove
+await invoke<CommandResult>('start_server', { name: 'my-server' });
+await invoke<CommandResult>('stop_server', { name: 'my-server' });
+await invoke<CommandResult>('remove_server', { name: 'my-server' });
+
+// Get logs (lazy-loaded on user request)
+const logs = await invoke<string>('get_container_logs', { name: 'my-server', lines: 30 });
 ```
 
 ---
 
-## Tauri Integration Example
+## Credential Storage
 
-```rust
-// src-tauri/src/main.rs
-#[tauri::command]
-async fn list_servers() -> Result<Vec<ServerInfo>, String> {
-    // Call Node.js sidecar or use Docker API directly
-}
+자격 증명은 Rust 백엔드에서 로컬 파일에 저장됩니다:
 
-#[tauri::command]
-async fn create_server(options: CreateServerOptions) -> Result<ServerResult, String> {
-    // ...
-}
-```
+- **Windows**: `%APPDATA%\sftp-manager\sftp-servers.json`
+- **macOS**: `~/Library/Application Support/sftp-manager/sftp-servers.json`
+- **Linux**: `~/.config/sftp-manager/sftp-servers.json`
 
-## Electron Integration Example
-
-```javascript
-// main.js (Main Process)
-const { ipcMain } = require('electron');
-const api = require('./core');
-
-ipcMain.handle('list_servers', async () => {
-  return await api.listServers();
-});
-
-ipcMain.handle('create_server', async (event, options) => {
-  return await api.createServer(options);
-});
-```
-
-```javascript
-// renderer.js (Renderer Process)
-const servers = await window.electronAPI.listServers();
-```
+Docker 컨테이너에는 비밀번호가 저장되지 않으므로, 앱에서 별도로 관리합니다.
 
 ---
 
-## Format Options
+## Async Operation Flow
 
-`format_connection_info`의 format 파라미터:
+모든 Docker 작업은 비동기로 처리되며, 프론트엔드에서는 Action State를 통해 UI를 관리합니다:
 
-| Format | Output Example |
-|--------|---------------|
-| `full` | `Host: 192.168.0.10\nPort: 2222\nUser: admin\nPass: abc123` |
-| `command` | `sftp -P 2222 admin@192.168.0.10` |
-| `url` | `sftp://admin:abc123@192.168.0.10:2222` |
-| `password` | `abc123` |
+```typescript
+// Action State Structure
+interface ActionState {
+  [serverName: string]: {
+    type: 'starting' | 'stopping' | 'removing' | 'creating';
+    error?: string;  // Set on failure
+  }
+}
+
+// Flow
+1. setAction(name, type)      // UI shows loading state
+2. invoke(command, args)      // Async IPC call
+3a. clearAction(name)         // Success: refresh servers
+3b. setActionError(name, type, error)  // Failure: show error
+```
