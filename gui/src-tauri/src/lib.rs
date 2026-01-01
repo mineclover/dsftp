@@ -117,16 +117,47 @@ fn check_docker() -> bool {
 
 #[tauri::command]
 fn get_local_ip() -> String {
-    // Windows: Get local IP
-    if let Ok(output) = run_command("powershell", &[
-        "-Command",
-        "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike '*Loopback*' -and $_.PrefixOrigin -eq 'Dhcp'}).IPAddress | Select-Object -First 1"
-    ]) {
-        let ip = output.trim().to_string();
-        if !ip.is_empty() {
-            return ip;
+    // Cross-platform: Try different methods to get local IP
+
+    // Method 1: Use hostname command (works on macOS/Linux/Windows)
+    if let Ok(output) = run_command("hostname", &["-I"]) {
+        // Linux: returns space-separated IPs
+        if let Some(ip) = output.trim().split_whitespace().next() {
+            if !ip.is_empty() && ip != "127.0.0.1" {
+                return ip.to_string();
+            }
         }
     }
+
+    // Method 2: macOS - use ipconfig getifaddr
+    #[cfg(target_os = "macos")]
+    {
+        // Try common interface names on macOS
+        for iface in &["en0", "en1", "en2"] {
+            if let Ok(output) = run_command("ipconfig", &["getifaddr", iface]) {
+                let ip = output.trim();
+                if !ip.is_empty() {
+                    return ip.to_string();
+                }
+            }
+        }
+    }
+
+    // Method 3: Windows - use PowerShell
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(output) = run_command("powershell", &[
+            "-Command",
+            "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike '*Loopback*' -and $_.PrefixOrigin -eq 'Dhcp'}).IPAddress | Select-Object -First 1"
+        ]) {
+            let ip = output.trim().to_string();
+            if !ip.is_empty() {
+                return ip;
+            }
+        }
+    }
+
+    // Fallback
     "127.0.0.1".to_string()
 }
 
