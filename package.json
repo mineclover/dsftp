@@ -1,5 +1,5 @@
 {
-  "name": "sftp-manager",
+  "name": "dsftp",
   "version": "1.0.0",
   "description": "SFTP container manager with TUI/CLI/GUI",
   "main": "cli/index.js",

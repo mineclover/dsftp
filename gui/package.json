@@ -1,5 +1,5 @@
 {
-  "name": "sftp-manager-gui",
+  "name": "dsftp-gui",
   "version": "1.0.0",
   "private": true,
   "type": "module",
