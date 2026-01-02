@@ -6,6 +6,7 @@ use std::process::Command;
 
 const SFTP_IMAGE: &str = "atmoz/sftp";
 const CONFIG_FILE: &str = "sftp-servers.json";
+const NETWORK_CONFIG_FILE: &str = "network-config.json";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StoredCredentials {
@@ -13,6 +14,29 @@ pub struct StoredCredentials {
     pub password: String,
     pub host_path: String,
     pub container_path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct NetworkConfig {
+    pub preferred_interface: Option<String>,
+    pub preferred_ip: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NetworkInterface {
+    pub name: String,
+    pub address: String,
+    pub is_vpn: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NetworkInfo {
+    pub current_ip: String,
+    pub current_interface: Option<String>,
+    pub is_vpn: bool,
+    pub preferred_ip: Option<String>,
+    pub preferred_interface: Option<String>,
+    pub interfaces: Vec<NetworkInterface>,
 }
 
 fn get_config_path() -> PathBuf {
@@ -37,6 +61,39 @@ fn save_credentials(creds: &HashMap<String, StoredCredentials>) {
     if let Ok(content) = serde_json::to_string_pretty(creds) {
         fs::write(path, content).ok();
     }
+}
+
+fn get_network_config_path() -> PathBuf {
+    let config_dir = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("sftp-manager");
+    fs::create_dir_all(&config_dir).ok();
+    config_dir.join(NETWORK_CONFIG_FILE)
+}
+
+fn load_network_config() -> NetworkConfig {
+    let path = get_network_config_path();
+    if let Ok(content) = fs::read_to_string(&path) {
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        NetworkConfig::default()
+    }
+}
+
+fn save_network_config(config: &NetworkConfig) {
+    let path = get_network_config_path();
+    if let Ok(content) = serde_json::to_string_pretty(config) {
+        fs::write(path, content).ok();
+    }
+}
+
+fn is_vpn_interface(name: &str) -> bool {
+    let vpn_patterns = [
+        "zerotier", "tailscale", "wireguard", "wg0", "wg1",
+        "tun", "tap", "vpn", "hamachi", "radmin"
+    ];
+    let name_lower = name.to_lowercase();
+    vpn_patterns.iter().any(|p| name_lower.contains(p))
 }
 
 fn store_server_credentials(name: &str, creds: StoredCredentials) {
@@ -230,7 +287,12 @@ fn extract_port(ports_str: &str) -> u16 {
 fn create_server(config: ServerConfig) -> CreateResult {
     let host_path = config.host_path.replace('\\', "/");
 
-    let port_mapping = format!("{}:22", config.port);
+    // Get network config to bind to specific IP
+    let network_config = load_network_config();
+    let interfaces = list_network_interfaces_internal();
+    let (bind_ip, _, _) = get_current_ip_internal(&interfaces, &network_config);
+
+    let port_mapping = format!("{}:{}:22", bind_ip, config.port);
     let volume_mapping = format!("{}:{}", host_path, config.container_path);
     let user_config = format!("{}:{}:1001", config.username, config.password);
 
@@ -355,6 +417,154 @@ fn get_container_logs(name: String, lines: u32) -> String {
     }
 }
 
+fn list_network_interfaces_internal() -> Vec<NetworkInterface> {
+    let mut interfaces: Vec<NetworkInterface> = Vec::new();
+
+    // Add 0.0.0.0 option for all interfaces
+    interfaces.push(NetworkInterface {
+        name: "All Interfaces".to_string(),
+        address: "0.0.0.0".to_string(),
+        is_vpn: false,
+    });
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(output) = run_command("powershell", &[
+            "-Command",
+            "Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.PrefixOrigin -ne 'WellKnown'} | Select-Object InterfaceAlias,IPAddress | ForEach-Object { $_.InterfaceAlias + '|' + $_.IPAddress }"
+        ]) {
+            for line in output.lines() {
+                let parts: Vec<&str> = line.split('|').collect();
+                if parts.len() >= 2 {
+                    let name = parts[0].trim().to_string();
+                    let address = parts[1].trim().to_string();
+                    if !address.starts_with("127.") && !address.is_empty() {
+                        let is_vpn = is_vpn_interface(&name);
+                        interfaces.push(NetworkInterface { name, address, is_vpn });
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = run_command("sh", &["-c", "ifconfig | grep -E '^[a-z]|inet ' | paste - - 2>/dev/null"]) {
+            for line in output.lines() {
+                if let (Some(name_part), Some(inet_part)) = (line.split_whitespace().next(), line.split("inet ").nth(1)) {
+                    let name = name_part.trim_end_matches(':').to_string();
+                    if let Some(addr) = inet_part.split_whitespace().next() {
+                        if !addr.starts_with("127.") {
+                            let is_vpn = is_vpn_interface(&name);
+                            interfaces.push(NetworkInterface { name, address: addr.to_string(), is_vpn });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(output) = run_command("sh", &["-c", "ip -4 addr show | grep -E '^[0-9]+:|inet '"]) {
+            let mut current_iface = String::new();
+            for line in output.lines() {
+                if line.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                    if let Some(name) = line.split(':').nth(1) {
+                        current_iface = name.trim().to_string();
+                    }
+                } else if line.contains("inet ") {
+                    if let Some(addr_part) = line.split("inet ").nth(1) {
+                        if let Some(addr) = addr_part.split('/').next() {
+                            if !addr.starts_with("127.") && !current_iface.is_empty() {
+                                let is_vpn = is_vpn_interface(&current_iface);
+                                interfaces.push(NetworkInterface {
+                                    name: current_iface.clone(),
+                                    address: addr.to_string(),
+                                    is_vpn,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    interfaces
+}
+
+fn get_current_ip_internal(interfaces: &[NetworkInterface], config: &NetworkConfig) -> (String, Option<String>, bool) {
+    // 1. Check preferred IP
+    if let Some(ref preferred_ip) = config.preferred_ip {
+        if let Some(iface) = interfaces.iter().find(|i| &i.address == preferred_ip) {
+            return (iface.address.clone(), Some(iface.name.clone()), iface.is_vpn);
+        }
+    }
+
+    // 2. Check preferred interface
+    if let Some(ref preferred_iface) = config.preferred_interface {
+        if let Some(iface) = interfaces.iter().find(|i| &i.name == preferred_iface) {
+            return (iface.address.clone(), Some(iface.name.clone()), iface.is_vpn);
+        }
+    }
+
+    // 3. First non-VPN interface
+    if let Some(iface) = interfaces.iter().find(|i| !i.is_vpn) {
+        return (iface.address.clone(), Some(iface.name.clone()), false);
+    }
+
+    // 4. Any interface
+    if let Some(iface) = interfaces.first() {
+        return (iface.address.clone(), Some(iface.name.clone()), iface.is_vpn);
+    }
+
+    ("127.0.0.1".to_string(), None, false)
+}
+
+#[tauri::command]
+fn list_network_interfaces() -> Vec<NetworkInterface> {
+    list_network_interfaces_internal()
+}
+
+#[tauri::command]
+fn get_network_info() -> NetworkInfo {
+    let config = load_network_config();
+    let interfaces = list_network_interfaces_internal();
+    let (current_ip, current_interface, is_vpn) = get_current_ip_internal(&interfaces, &config);
+
+    NetworkInfo {
+        current_ip,
+        current_interface,
+        is_vpn,
+        preferred_ip: config.preferred_ip,
+        preferred_interface: config.preferred_interface,
+        interfaces,
+    }
+}
+
+#[tauri::command]
+fn set_network_preference(ip: Option<String>, interface: Option<String>) -> CommandResult {
+    let mut config = load_network_config();
+
+    if let Some(ip_val) = ip {
+        config.preferred_ip = Some(ip_val);
+        config.preferred_interface = None;
+    } else if let Some(iface_val) = interface {
+        config.preferred_interface = Some(iface_val);
+        config.preferred_ip = None;
+    }
+
+    save_network_config(&config);
+    CommandResult { success: true, error: None }
+}
+
+#[tauri::command]
+fn clear_network_preference() -> CommandResult {
+    save_network_config(&NetworkConfig::default());
+    CommandResult { success: true, error: None }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -370,6 +580,10 @@ pub fn run() {
             remove_server,
             get_container_status,
             get_container_logs,
+            list_network_interfaces,
+            get_network_info,
+            set_network_preference,
+            clear_network_preference,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

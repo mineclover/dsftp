@@ -1,6 +1,14 @@
-import { Server, Settings, HardDrive } from 'lucide-react';
+import { HardDrive } from 'lucide-react';
+import type { Server } from '../types';
 
-function Sidebar({ servers, selectedServer, onSelectServer }) {
+interface SidebarProps {
+  servers: Server[];
+  selectedServer: Server | null;
+  onSelectServer: (server: Server) => void;
+  loading?: boolean;
+}
+
+function Sidebar({ servers, selectedServer, onSelectServer }: SidebarProps) {
   const runningCount = servers.filter(s => s.status === 'running').length;
 
   return (

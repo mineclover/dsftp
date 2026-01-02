@@ -4,6 +4,8 @@ node_modules/
 # Build outputs
 dist/
 target/
+portable/
+gui/dist/
 
 # IDE
 .idea/
@@ -14,6 +16,7 @@ target/
 # OS
 .DS_Store
 Thumbs.db
+nul
 
 # Logs
 *.log
@@ -25,4 +28,6 @@ npm-debug.log*
 
 # Tauri
 gui/src-tauri/target/
-nul
+
+# Lock files (optional - remove if you want to track)
+# package-lock.json

@@ -11,22 +11,35 @@ import {
   RefreshCw,
   Loader2,
   AlertCircle,
-  X
+  X,
+  Shield
 } from 'lucide-react';
+import type { Server, ActionType } from '../types';
 
-// Action type labels
-const ActionLabels = {
+const ActionLabels: Record<ActionType, string> = {
   starting: 'Starting...',
   stopping: 'Stopping...',
   removing: 'Removing...',
+  creating: 'Creating...',
 };
 
-function ServerDetail({ server, localIP, onStart, onStop, onRemove, onBack, onDismissError }) {
+interface ServerDetailProps {
+  server: Server;
+  localIP: string;
+  isVPN?: boolean;
+  onStart: () => void;
+  onStop: () => void;
+  onRemove: () => void;
+  onBack: () => void;
+  onDismissError: () => void;
+}
+
+function ServerDetail({ server, localIP, isVPN = false, onStart, onStop, onRemove, onBack, onDismissError }: ServerDetailProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState('');
   const [logsLoading, setLogsLoading] = useState(false);
-  const [copied, setCopied] = useState(null);
+  const [copied, setCopied] = useState<string | null>(null);
 
   const isRunning = server.status === 'running';
   const action = server.action;
@@ -36,13 +49,13 @@ function ServerDetail({ server, localIP, onStart, onStop, onRemove, onBack, onDi
   function loadLogs() {
     setShowLogs(true);
     setLogsLoading(true);
-    invoke('get_container_logs', { name: server.name, lines: 30 })
+    invoke<string>('get_container_logs', { name: server.name, lines: 30 })
       .then(result => setLogs(result))
       .catch(() => setLogs('Failed to load logs'))
       .finally(() => setLogsLoading(false));
   }
 
-  async function copyToClipboard(text, label) {
+  async function copyToClipboard(text: string, label: string) {
     await navigator.clipboard.writeText(text);
     setCopied(label);
     setTimeout(() => setCopied(null), 2000);
@@ -59,16 +72,15 @@ function ServerDetail({ server, localIP, onStart, onStop, onRemove, onBack, onDi
 
   return (
     <div>
-      {/* Error Banner */}
       {hasError && (
         <div className="mb-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <AlertCircle size={20} className="text-red-500" />
             <div>
               <p className="font-medium text-red-800 dark:text-red-200">
-                {ActionLabels[action.type] || 'Operation'} failed
+                {action?.type ? ActionLabels[action.type] : 'Operation'} failed
               </p>
-              <p className="text-sm text-red-600 dark:text-red-400">{action.error}</p>
+              <p className="text-sm text-red-600 dark:text-red-400">{action?.error}</p>
             </div>
           </div>
           <button
@@ -80,7 +92,6 @@ function ServerDetail({ server, localIP, onStart, onStop, onRemove, onBack, onDi
         </div>
       )}
 
-      {/* Header */}
       <div className="flex items-center gap-4 mb-6">
         <button
           onClick={onBack}
@@ -102,7 +113,7 @@ function ServerDetail({ server, localIP, onStart, onStop, onRemove, onBack, onDi
             <h2 className="text-2xl font-bold text-gray-800 dark:text-white">
               {server.name}
             </h2>
-            {hasAction && (
+            {hasAction && action?.type && (
               <span className="text-sm text-blue-600 dark:text-blue-400">
                 {ActionLabels[action.type] || 'Processing...'}
               </span>
@@ -154,19 +165,35 @@ function ServerDetail({ server, localIP, onStart, onStop, onRemove, onBack, onDi
         </div>
       </div>
 
-      {/* Connection Info */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 mb-6">
         <h3 className="text-lg font-semibold text-gray-800 dark:text-white mb-4">
           Connection Info
         </h3>
 
         <div className="space-y-3">
-          <InfoRow
-            label="Host"
-            value={connectionInfo.host}
-            onCopy={() => copyToClipboard(connectionInfo.host, 'host')}
-            copied={copied === 'host'}
-          />
+          <div className="flex items-center gap-4">
+            <span className="w-24 text-sm text-gray-500 dark:text-gray-400">
+              Host
+            </span>
+            <div className="flex-1 flex items-center gap-2">
+              <code className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm flex items-center gap-2">
+                {connectionInfo.host}
+                {isVPN && (
+                  <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300">
+                    <Shield size={10} />
+                    VPN
+                  </span>
+                )}
+              </code>
+              <button
+                onClick={() => copyToClipboard(connectionInfo.host, 'host')}
+                className="p-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+              >
+                <Copy size={16} />
+              </button>
+              {copied === 'host' && <span className="text-xs text-green-600">Copied!</span>}
+            </div>
+          </div>
           <InfoRow
             label="Port"
             value={connectionInfo.port?.toString() || ''}
@@ -237,7 +264,6 @@ function ServerDetail({ server, localIP, onStart, onStop, onRemove, onBack, onDi
         </div>
       </div>
 
-      {/* Logs */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-800 dark:text-white">
@@ -274,7 +300,14 @@ function ServerDetail({ server, localIP, onStart, onStop, onRemove, onBack, onDi
   );
 }
 
-function InfoRow({ label, value, onCopy, copied }) {
+interface InfoRowProps {
+  label: string;
+  value: string;
+  onCopy: () => void;
+  copied: boolean;
+}
+
+function InfoRow({ label, value, onCopy, copied }: InfoRowProps) {
   return (
     <div className="flex items-center gap-4">
       <span className="w-24 text-sm text-gray-500 dark:text-gray-400">

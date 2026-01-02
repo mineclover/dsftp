@@ -1,16 +1,15 @@
-# SFTP Manager
+# SFTP Manager (dsftp)
 
-Docker 기반 SFTP 서버를 쉽게 관리할 수 있는 데스크톱 앱입니다.
+Docker 기반 SFTP 서버를 쉽게 관리할 수 있는 도구입니다.
 
 ## Features
 
-- **Tauri 2.0 GUI**: React + Rust 기반 네이티브 데스크톱 앱
-- **Docker Integration**: atmoz/sftp 이미지를 사용한 SFTP 서버 관리
-- **Native Folder Picker**: OS 네이티브 폴더 선택 다이얼로그
-- **Async Operations**: 모든 Docker 작업 비동기 처리 (UI 블로킹 없음)
-- **Credential Storage**: 자격 증명 로컬 저장
-- **Dark Mode**: 다크/라이트 테마 지원
+- **Tauri 2.0 GUI**: React + TypeScript + Rust 기반 네이티브 데스크톱 앱
 - **CLI & TUI**: 명령줄 및 터미널 UI 지원
+- **Docker Integration**: atmoz/sftp 이미지를 사용한 SFTP 서버 관리
+- **VPN Network Support**: ZeroTier, Tailscale 등 VPN 인터페이스 지원
+- **Network Binding**: 특정 네트워크 인터페이스에만 서버 바인딩 가능
+- **Dark Mode**: 다크/라이트 테마 지원
 
 ## Quick Start
 
@@ -18,96 +17,121 @@ Docker 기반 SFTP 서버를 쉽게 관리할 수 있는 데스크톱 앱입니�
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 - [Node.js](https://nodejs.org/) 18+
-- [Rust](https://rustup.rs/) (Tauri 빌드용)
+- [Rust](https://rustup.rs/) (GUI 빌드용)
+
+### Install & Build
+
+```bash
+npm install
+npm run build
+```
+
+### Run CLI
+
+```bash
+# 도움말
+node dist/cli/index.js --help
+
+# 서버 목록
+node dist/cli/index.js list
+
+# 서버 생성
+node dist/cli/index.js create -n myserver -p ./files -u admin
+
+# 네트워크 설정
+node dist/cli/index.js network
+node dist/cli/index.js network:set 10.99.13.37
+node dist/cli/index.js network:vpn
+node dist/cli/index.js network:clear
+```
+
+### Run TUI
+
+```bash
+node dist/cli/index.js
+# 또는
+node dist/cli/index.js --tui
+```
 
 ### Run GUI
 
 ```bash
 cd gui
 npm install
-npm run tauri:dev
+npm run tauri dev     # 개발 모드
+npm run tauri build   # 프로덕션 빌드
 ```
 
-### Run CLI
+## Network / VPN Support
+
+VPN 네트워크 인터페이스를 자동 감지하고 선택할 수 있습니다:
+
+- **ZeroTier**: `ZeroTier One [...]`
+- **Tailscale**: `Tailscale`
+- **WireGuard**: `wg0`, `wg1`
+- **기타**: `tun`, `tap`, `vpn`, `hamachi`, `radmin`
+
+### 네트워크 바인딩
+
+서버 생성 시 선택된 네트워크 IP로 포트가 바인딩됩니다:
 
 ```bash
-npm install
-node cli/index.js --help
-```
+# VPN 전용 (다른 네트워크에서 접근 불가)
+100.108.49.90:2222->22/tcp
 
-### Run TUI
-
-```bash
-node cli/tui.js
+# 모든 인터페이스 (0.0.0.0)
+0.0.0.0:2222->22/tcp
 ```
 
 ## Project Structure
 
 ```
-E:\NAS\
-├── gui/                    # Tauri GUI 앱
-│   ├── src/               # React 컴포넌트
-│   │   ├── App.jsx        # 메인 앱 (상태 관리)
-│   │   └── components/    # UI 컴포넌트
-│   └── src-tauri/         # Rust 백엔드
-│       └── src/lib.rs     # Tauri 커맨드
-├── cli/                   # CLI 도구
-│   ├── index.js          # Commander.js CLI
-│   └── tui.js            # Inquirer TUI
-├── core/                  # 공통 로직
-│   ├── docker.js         # Docker 명령어
-│   └── config.js         # 설정 관리
-└── docs/                  # 문서
-    ├── API.md            # API 스펙
-    ├── UI-SPEC.md        # UI 스펙
-    └── MENU.md           # 메뉴 구조
+dsftp/
+├── core/                  # 공통 TypeScript 로직
+│   ├── docker.ts         # Docker 명령어, 네트워크 감지
+│   ├── config.ts         # 설정 관리
+│   ├── index.ts          # API 엔트리포인트
+│   └── types.ts          # 타입 정의
+├── cli/                   # CLI/TUI
+│   ├── index.ts          # Commander.js CLI
+│   └── tui.ts            # Inquirer TUI
+├── gui/                   # Tauri GUI 앱
+│   ├── src/              # React + TypeScript
+│   └── src-tauri/        # Rust 백엔드
+└── dist/                  # 빌드 출력
 ```
 
-## GUI Screenshots
-
-### Server List
-- 서버 카드로 상태 표시 (Running/Stopped)
-- Start All / Stop All 버튼
-- 컨텍스트 메뉴 (Copy, Remove)
-
-### Server Detail
-- 접속 정보 (Host, Port, Username, Password)
-- Quick Copy (SFTP Command, FileZilla URL)
-- Lazy-loading 로그
-
-### Create Server
-- 네이티브 폴더 선택
-- 자동 비밀번호 생성
-- 포트 자동 할당
-
-## API Commands
+## CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `list_servers` | 모든 서버 목록 |
-| `create_server` | 새 서버 생성 |
-| `start_server` | 서버 시작 |
-| `stop_server` | 서버 중지 |
-| `remove_server` | 서버 삭제 |
-| `get_container_logs` | 로그 조회 |
-| `check_docker` | Docker 상태 확인 |
-| `get_local_ip` | 로컬 IP 조회 |
+| `list` / `ls` | 모든 서버 목록 |
+| `create` | 새 서버 생성 |
+| `start <name>` | 서버 시작 |
+| `stop <name>` | 서버 중지 |
+| `remove <name>` / `rm` | 서버 삭제 |
+| `info <name>` | 서버 정보 |
+| `copy <name>` / `cp` | 접속 정보 클립보드 복사 |
+| `logs <name>` | 로그 조회 |
+| `start-all` | 모든 서버 시작 |
+| `stop-all` | 모든 서버 중지 |
+| `status` | 시스템 상태 |
+| `network` / `net` | 네트워크 인터페이스 목록 |
+| `network:set <ip>` | 네트워크 설정 |
+| `network:vpn` | VPN 사용 |
+| `network:clear` | 네트워크 설정 초기화 |
 
-## Async Architecture
+## GUI Features
 
-모든 Docker 작업은 비동기로 처리되어 UI가 블로킹되지 않습니다:
+### StatusBar Network Selector
+- 클릭하여 네트워크 인터페이스 선택
+- VPN 인터페이스 노란색 배지 표시
+- 실시간 네트워크 목록 조회
 
-```
-User Action → setAction(type) → invoke() → clearAction/setError
-     ↓              ↓              ↓              ↓
-  Click        Show Spinner    Docker API    Update UI
-```
-
-Action Types:
-- `starting`: 서버 시작 중
-- `stopping`: 서버 중지 중
-- `removing`: 서버 삭제 중
-- `creating`: 서버 생성 중
+### Server Creation
+- Username에 따라 Container Path 자동 설정 (`/home/{username}/files`)
+- 선택된 네트워크 IP로 포트 바인딩
+- 자동 비밀번호 생성
 
 ## License
 

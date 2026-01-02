@@ -1,18 +1,42 @@
-import { useState } from 'react';
+import { useState, FormEvent } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { X, FolderOpen, RefreshCw } from 'lucide-react';
+import type { ServerConfig, CreateResult } from '../types';
 
-function CreateServerModal({ onClose, onCreate, defaultPort }) {
-  const [formData, setFormData] = useState({
+interface CreateServerModalProps {
+  onClose: () => void;
+  onCreate: (config: ServerConfig) => CreateResult;
+  defaultPort: number;
+}
+
+interface FormData {
+  name: string;
+  hostPath: string;
+  containerPath: string;
+  port: number;
+  username: string;
+  password: string;
+}
+
+function CreateServerModal({ onClose, onCreate, defaultPort }: CreateServerModalProps) {
+  const [formData, setFormData] = useState<FormData>({
     name: `sftp-${Date.now().toString(36)}`,
     hostPath: '',
-    containerPath: '/home/user/files',
+    containerPath: '/home/admin/files',
     port: defaultPort || 2222,
     username: 'admin',
     password: ''
   });
+
+  function handleUsernameChange(newUsername: string) {
+    setFormData(prev => ({
+      ...prev,
+      username: newUsername,
+      containerPath: `/home/${newUsername}/files`
+    }));
+  }
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
   async function selectFolder() {
     const selected = await open({
@@ -22,7 +46,7 @@ function CreateServerModal({ onClose, onCreate, defaultPort }) {
     });
 
     if (selected) {
-      setFormData(prev => ({ ...prev, hostPath: selected }));
+      setFormData(prev => ({ ...prev, hostPath: selected as string }));
     }
   }
 
@@ -35,12 +59,21 @@ function CreateServerModal({ onClose, onCreate, defaultPort }) {
     setFormData(prev => ({ ...prev, password }));
   }
 
-  async function handleSubmit(e) {
+  function generateRandomPassword(): string {
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let password = '';
+    for (let i = 0; i < 12; i++) {
+      password += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return password;
+  }
+
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
-    const config = {
+    const config: ServerConfig = {
       name: formData.name,
       port: formData.port,
       host_path: formData.hostPath,
@@ -49,24 +82,15 @@ function CreateServerModal({ onClose, onCreate, defaultPort }) {
       password: formData.password || generateRandomPassword()
     };
 
-    const result = await onCreate(config);
+    const result = onCreate(config);
 
     if (result.success) {
       onClose();
     } else {
-      setError(result.error);
+      setError(result.error || 'Unknown error');
     }
 
     setLoading(false);
-  }
-
-  function generateRandomPassword() {
-    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let password = '';
-    for (let i = 0; i < 12; i++) {
-      password += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return password;
   }
 
   return (
@@ -165,7 +189,7 @@ function CreateServerModal({ onClose, onCreate, defaultPort }) {
               <input
                 type="text"
                 value={formData.username}
-                onChange={e => setFormData(prev => ({ ...prev, username: e.target.value }))}
+                onChange={e => handleUsernameChange(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 required
               />

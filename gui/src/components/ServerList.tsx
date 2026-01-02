@@ -1,17 +1,32 @@
-import { Play, Square, Trash2, Copy, MoreVertical, Loader2, X, AlertCircle } from 'lucide-react';
+import { Play, Square, Trash2, Copy, MoreVertical, Loader2, X, AlertCircle, Shield } from 'lucide-react';
 import { useState } from 'react';
+import type { Server, ActionType } from '../types';
 
-// Action type labels for display
-const ActionLabels = {
+const ActionLabels: Record<ActionType, string> = {
   starting: 'Starting...',
   stopping: 'Stopping...',
   removing: 'Removing...',
   creating: 'Creating...',
 };
 
+interface ServerListProps {
+  servers: Server[];
+  localIP: string;
+  isVPN?: boolean;
+  loading: boolean;
+  onSelect: (server: Server) => void;
+  onStart: (name: string) => void;
+  onStop: (name: string) => void;
+  onRemove: (name: string) => void;
+  onStartAll: () => void;
+  onStopAll: () => void;
+  onDismissError: (name: string) => void;
+}
+
 function ServerList({
   servers,
   localIP,
+  isVPN = false,
   loading,
   onSelect,
   onStart,
@@ -20,7 +35,7 @@ function ServerList({
   onStartAll,
   onStopAll,
   onDismissError
-}) {
+}: ServerListProps) {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -71,6 +86,7 @@ function ServerList({
               key={server.name}
               server={server}
               localIP={localIP}
+              isVPN={isVPN}
               onSelect={() => onSelect(server)}
               onStart={() => onStart(server.name)}
               onStop={() => onStop(server.name)}
@@ -84,7 +100,18 @@ function ServerList({
   );
 }
 
-function ServerCard({ server, localIP, onSelect, onStart, onStop, onRemove, onDismissError }) {
+interface ServerCardProps {
+  server: Server;
+  localIP: string;
+  isVPN?: boolean;
+  onSelect: () => void;
+  onStart: () => void;
+  onStop: () => void;
+  onRemove: () => void;
+  onDismissError: () => void;
+}
+
+function ServerCard({ server, localIP, isVPN = false, onSelect, onStart, onStop, onRemove, onDismissError }: ServerCardProps) {
   const [showMenu, setShowMenu] = useState(false);
   const isRunning = server.status === 'running';
   const action = server.action;
@@ -92,12 +119,11 @@ function ServerCard({ server, localIP, onSelect, onStart, onStop, onRemove, onDi
   const hasError = action?.error;
   const isCreating = server.status === 'creating' || action?.type === 'creating';
 
-  async function copyToClipboard(text) {
+  async function copyToClipboard(text: string) {
     await navigator.clipboard.writeText(text);
     setShowMenu(false);
   }
 
-  // Error state card
   if (hasError) {
     return (
       <div className="bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-200 dark:border-red-800 p-4">
@@ -128,7 +154,6 @@ function ServerCard({ server, localIP, onSelect, onStart, onStop, onRemove, onDi
     );
   }
 
-  // Action in progress card
   if (hasAction || isCreating) {
     const actionType = action?.type || 'creating';
     return (
@@ -153,7 +178,6 @@ function ServerCard({ server, localIP, onSelect, onStart, onStop, onRemove, onDi
     );
   }
 
-  // Normal card
   return (
     <div
       className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 hover:shadow-lg transition-shadow cursor-pointer"
@@ -170,8 +194,14 @@ function ServerCard({ server, localIP, onSelect, onStart, onStop, onRemove, onDi
             <h3 className="font-semibold text-gray-800 dark:text-white">
               {server.name}
             </h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+            <p className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1">
               {server.username}@{localIP}:{server.port}
+              {isVPN && (
+                <span className="inline-flex items-center gap-0.5 text-xs px-1 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300 ml-1">
+                  <Shield size={10} />
+                  VPN
+                </span>
+              )}
             </p>
           </div>
         </div>

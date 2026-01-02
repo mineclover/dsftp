@@ -11,26 +11,29 @@ import {
   Sun,
   Loader2
 } from 'lucide-react';
+import type { Server, ServerConfig, ActionType, ServerAction, CreateResult, NetworkInfo } from './types';
 
-// Action types for server operations
-const ActionTypes = {
+const ActionTypes: Record<string, ActionType> = {
   STARTING: 'starting',
   STOPPING: 'stopping',
   REMOVING: 'removing',
   CREATING: 'creating',
 };
 
+interface InvokeResult {
+  success: boolean;
+  error?: string;
+}
+
 function App() {
-  const [servers, setServers] = useState([]);
-  const [selectedServer, setSelectedServer] = useState(null);
+  const [servers, setServers] = useState<Server[]>([]);
+  const [selectedServer, setSelectedServer] = useState<Server | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [dockerStatus, setDockerStatus] = useState(null);
-  const [localIP, setLocalIP] = useState('127.0.0.1');
+  const [dockerStatus, setDockerStatus] = useState<boolean | null>(null);
+  const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null);
   const [darkMode, setDarkMode] = useState(false);
   const [loadingServers, setLoadingServers] = useState(false);
-
-  // Unified action state: { [serverName]: { type, error? } }
-  const [actions, setActions] = useState({});
+  const [actions, setActions] = useState<Record<string, ServerAction>>({});
 
   useEffect(() => {
     initializeApp();
@@ -40,7 +43,6 @@ function App() {
     document.documentElement.classList.toggle('dark', darkMode);
   }, [darkMode]);
 
-  // Update selected server when servers list changes
   useEffect(() => {
     if (selectedServer) {
       const updated = servers.find(s => s.name === selectedServer.name);
@@ -48,14 +50,14 @@ function App() {
         setSelectedServer(updated);
       }
     }
-  }, [servers]);
+  }, [servers, selectedServer]);
 
   function initializeApp() {
-    invoke('check_docker')
+    invoke<boolean>('check_docker')
       .then(docker => {
         setDockerStatus(docker);
         if (docker) {
-          invoke('get_local_ip').then(ip => setLocalIP(ip));
+          refreshNetworkInfo();
           refreshServers();
         }
       })
@@ -65,21 +67,37 @@ function App() {
       });
   }
 
+  function refreshNetworkInfo() {
+    invoke<NetworkInfo>('get_network_info')
+      .then(info => setNetworkInfo(info))
+      .catch(error => console.error('Failed to get network info:', error));
+  }
+
+  const handleSetNetwork = useCallback((ip: string) => {
+    invoke<InvokeResult>('set_network_preference', { ip, interface: null })
+      .then(() => refreshNetworkInfo())
+      .catch(error => console.error('Failed to set network:', error));
+  }, []);
+
+  const handleClearNetwork = useCallback(() => {
+    invoke<InvokeResult>('clear_network_preference')
+      .then(() => refreshNetworkInfo())
+      .catch(error => console.error('Failed to clear network:', error));
+  }, []);
+
   function refreshServers() {
     setLoadingServers(true);
-    invoke('list_servers')
+    invoke<Server[]>('list_servers')
       .then(serverList => setServers(serverList))
       .catch(error => console.error('Failed to list servers:', error))
       .finally(() => setLoadingServers(false));
   }
 
-  // Set action state for a server
-  const setAction = useCallback((name, type) => {
+  const setAction = useCallback((name: string, type: ActionType) => {
     setActions(prev => ({ ...prev, [name]: { type } }));
   }, []);
 
-  // Clear action state for a server
-  const clearAction = useCallback((name) => {
+  const clearAction = useCallback((name: string) => {
     setActions(prev => {
       const next = { ...prev };
       delete next[name];
@@ -87,26 +105,22 @@ function App() {
     });
   }, []);
 
-  // Set error state for a server action
-  const setActionError = useCallback((name, type, error) => {
+  const setActionError = useCallback((name: string, type: ActionType, error: string) => {
     setActions(prev => ({ ...prev, [name]: { type, error } }));
   }, []);
 
-  // Dismiss action error
-  const dismissActionError = useCallback((name) => {
+  const dismissActionError = useCallback((name: string) => {
     clearAction(name);
   }, [clearAction]);
 
-  // Generic async action executor
-  const executeAction = useCallback((name, actionType, invokeCmd, invokeArgs = {}) => {
+  const executeAction = useCallback((name: string, actionType: ActionType, invokeCmd: string, invokeArgs: Record<string, unknown> = {}) => {
     setAction(name, actionType);
 
-    invoke(invokeCmd, invokeArgs)
+    invoke<InvokeResult>(invokeCmd, invokeArgs)
       .then(result => {
         clearAction(name);
         if (result.success) {
           refreshServers();
-          // If removing the selected server, deselect it
           if (actionType === ActionTypes.REMOVING && selectedServer?.name === name) {
             setSelectedServer(null);
           }
@@ -119,25 +133,23 @@ function App() {
       });
   }, [setAction, clearAction, setActionError, selectedServer]);
 
-  // Action handlers
-  const handleStartServer = useCallback((name) => {
+  const handleStartServer = useCallback((name: string) => {
     executeAction(name, ActionTypes.STARTING, 'start_server', { name });
   }, [executeAction]);
 
-  const handleStopServer = useCallback((name) => {
+  const handleStopServer = useCallback((name: string) => {
     executeAction(name, ActionTypes.STOPPING, 'stop_server', { name });
   }, [executeAction]);
 
-  const handleRemoveServer = useCallback((name) => {
+  const handleRemoveServer = useCallback((name: string) => {
     executeAction(name, ActionTypes.REMOVING, 'remove_server', { name });
   }, [executeAction]);
 
-  const handleCreateServer = useCallback((config) => {
+  const handleCreateServer = useCallback((config: ServerConfig): CreateResult => {
     setShowCreateModal(false);
     setAction(config.name, ActionTypes.CREATING);
 
-    // Add placeholder server for immediate UI feedback
-    const placeholderServer = {
+    const placeholderServer: Server = {
       name: config.name,
       port: config.port,
       host_path: config.host_path,
@@ -148,7 +160,7 @@ function App() {
     };
     setServers(prev => [placeholderServer, ...prev]);
 
-    invoke('create_server', { config })
+    invoke<InvokeResult>('create_server', { config })
       .then(result => {
         clearAction(config.name);
         if (result.success) {
@@ -164,7 +176,6 @@ function App() {
     return { success: true };
   }, [setAction, clearAction, setActionError]);
 
-  // Start/Stop all - execute in parallel
   const handleStartAll = useCallback(() => {
     servers.forEach(server => {
       if (server.status !== 'running' && !actions[server.name]) {
@@ -181,7 +192,6 @@ function App() {
     });
   }, [servers, actions, handleStopServer]);
 
-  // Merge servers with their action states
   const serversWithActions = servers.map(server => ({
     ...server,
     action: actions[server.name] || null,
@@ -191,7 +201,6 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-900">
-      {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <h1 className="text-xl font-bold text-gray-800 dark:text-white">
           SFTP Manager
@@ -214,7 +223,6 @@ function App() {
         </div>
       </header>
 
-      {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           servers={serversWithActions}
@@ -239,7 +247,8 @@ function App() {
           ) : selectedServer ? (
             <ServerDetail
               server={serversWithActions.find(s => s.name === selectedServer.name) || selectedServer}
-              localIP={localIP}
+              localIP={networkInfo?.current_ip || '127.0.0.1'}
+              isVPN={networkInfo?.is_vpn || false}
               onStart={() => handleStartServer(selectedServer.name)}
               onStop={() => handleStopServer(selectedServer.name)}
               onRemove={() => handleRemoveServer(selectedServer.name)}
@@ -249,7 +258,8 @@ function App() {
           ) : (
             <ServerList
               servers={serversWithActions}
-              localIP={localIP}
+              localIP={networkInfo?.current_ip || '127.0.0.1'}
+              isVPN={networkInfo?.is_vpn || false}
               loading={loadingServers}
               onSelect={setSelectedServer}
               onStart={handleStartServer}
@@ -263,15 +273,15 @@ function App() {
         </main>
       </div>
 
-      {/* Status Bar */}
       <StatusBar
         dockerStatus={dockerStatus}
-        localIP={localIP}
+        networkInfo={networkInfo}
         serverCount={servers.length}
         runningCount={servers.filter(s => s.status === 'running').length}
+        onSetNetwork={handleSetNetwork}
+        onClearNetwork={handleClearNetwork}
       />
 
-      {/* Create Modal */}
       {showCreateModal && (
         <CreateServerModal
           onClose={() => setShowCreateModal(false)}
