@@ -184,21 +184,38 @@ fn check_docker() -> bool {
 fn get_local_ip() -> String {
     // Cross-platform: Try different methods to get local IP
 
-    // Method 1: Use hostname command (works on macOS/Linux/Windows)
-    if let Ok(output) = run_command("hostname", &["-I"]) {
-        // Linux: returns space-separated IPs
-        if let Some(ip) = output.trim().split_whitespace().next() {
-            if !ip.is_empty() && ip != "127.0.0.1" {
-                return ip.to_string();
+    // Method 1: Linux - use hostname -I (GNU extension, not available on macOS)
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(output) = run_command("hostname", &["-I"]) {
+            if let Some(ip) = output.trim().split_whitespace().next() {
+                if !ip.is_empty() && ip != "127.0.0.1" {
+                    return ip.to_string();
+                }
             }
         }
     }
 
-    // Method 2: macOS - use ipconfig getifaddr
+    // Method 2: macOS - use ipconfig getifaddr with dynamic interface discovery
     #[cfg(target_os = "macos")]
     {
-        // Try common interface names on macOS
-        for iface in &["en0", "en1", "en2"] {
+        // Get list of network services dynamically
+        if let Ok(output) = run_command("sh", &["-c", "ifconfig -l"]) {
+            for iface in output.trim().split_whitespace() {
+                // Skip loopback and other non-ethernet interfaces
+                if iface.starts_with("lo") || iface.starts_with("gif") || iface.starts_with("stf") {
+                    continue;
+                }
+                if let Ok(ip_output) = run_command("ipconfig", &["getifaddr", iface]) {
+                    let ip = ip_output.trim();
+                    if !ip.is_empty() && !ip.starts_with("127.") {
+                        return ip.to_string();
+                    }
+                }
+            }
+        }
+        // Fallback to common interface names
+        for iface in &["en0", "en1", "en2", "en3", "en4", "en5", "en10", "en11"] {
             if let Ok(output) = run_command("ipconfig", &["getifaddr", iface]) {
                 let ip = output.trim();
                 if !ip.is_empty() {
@@ -208,12 +225,12 @@ fn get_local_ip() -> String {
         }
     }
 
-    // Method 3: Windows - use PowerShell
+    // Method 3: Windows - use PowerShell (includes both DHCP and static IPs)
     #[cfg(target_os = "windows")]
     {
         if let Ok(output) = run_command("powershell", &[
             "-Command",
-            "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike '*Loopback*' -and $_.PrefixOrigin -eq 'Dhcp'}).IPAddress | Select-Object -First 1"
+            "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike '*Loopback*' -and $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*'}).IPAddress | Select-Object -First 1"
         ]) {
             let ip = output.trim().to_string();
             if !ip.is_empty() {
@@ -501,7 +518,8 @@ fn list_network_interfaces_internal() -> Vec<NetworkInterface> {
                 if parts.len() >= 2 {
                     let name = parts[0].trim().to_string();
                     let address = parts[1].trim().to_string();
-                    if !address.starts_with("127.") && !address.is_empty() {
+                    // Filter out loopback and link-local addresses
+                    if !address.starts_with("127.") && !address.starts_with("169.254.") && !address.is_empty() {
                         let is_vpn = is_vpn_interface(&name);
                         interfaces.push(NetworkInterface { name, address, is_vpn });
                     }
@@ -512,14 +530,26 @@ fn list_network_interfaces_internal() -> Vec<NetworkInterface> {
 
     #[cfg(target_os = "macos")]
     {
-        if let Ok(output) = run_command("sh", &["-c", "ifconfig | grep -E '^[a-z]|inet ' | paste - - 2>/dev/null"]) {
+        // Use ifconfig to list all interfaces and their IPs
+        if let Ok(output) = run_command("sh", &["-c", "ifconfig -a"]) {
+            let mut current_iface = String::new();
             for line in output.lines() {
-                if let (Some(name_part), Some(inet_part)) = (line.split_whitespace().next(), line.split("inet ").nth(1)) {
-                    let name = name_part.trim_end_matches(':').to_string();
-                    if let Some(addr) = inet_part.split_whitespace().next() {
-                        if !addr.starts_with("127.") {
-                            let is_vpn = is_vpn_interface(&name);
-                            interfaces.push(NetworkInterface { name, address: addr.to_string(), is_vpn });
+                // Interface line starts with non-whitespace
+                if !line.starts_with('\t') && !line.starts_with(' ') && line.contains(':') {
+                    current_iface = line.split(':').next().unwrap_or("").to_string();
+                } else if line.contains("inet ") && !current_iface.is_empty() {
+                    // Parse inet line: "inet 192.168.1.100 netmask ..."
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if let Some(inet_idx) = parts.iter().position(|&x| x == "inet") {
+                        if let Some(addr) = parts.get(inet_idx + 1) {
+                            if !addr.starts_with("127.") && !addr.starts_with("169.254.") {
+                                let is_vpn = is_vpn_interface(&current_iface);
+                                interfaces.push(NetworkInterface {
+                                    name: current_iface.clone(),
+                                    address: addr.to_string(),
+                                    is_vpn,
+                                });
+                            }
                         }
                     }
                 }
@@ -529,17 +559,19 @@ fn list_network_interfaces_internal() -> Vec<NetworkInterface> {
 
     #[cfg(target_os = "linux")]
     {
-        if let Ok(output) = run_command("sh", &["-c", "ip -4 addr show | grep -E '^[0-9]+:|inet '"]) {
+        if let Ok(output) = run_command("sh", &["-c", "ip -4 addr show"]) {
             let mut current_iface = String::new();
             for line in output.lines() {
+                // Interface line: "2: eth0: <BROADCAST..."
                 if line.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
                     if let Some(name) = line.split(':').nth(1) {
                         current_iface = name.trim().to_string();
                     }
                 } else if line.contains("inet ") {
+                    // Parse: "inet 192.168.1.100/24 brd..."
                     if let Some(addr_part) = line.split("inet ").nth(1) {
                         if let Some(addr) = addr_part.split('/').next() {
-                            if !addr.starts_with("127.") && !current_iface.is_empty() {
+                            if !addr.starts_with("127.") && !addr.starts_with("169.254.") && !current_iface.is_empty() {
                                 let is_vpn = is_vpn_interface(&current_iface);
                                 interfaces.push(NetworkInterface {
                                     name: current_iface.clone(),
