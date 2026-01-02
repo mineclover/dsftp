@@ -5,6 +5,7 @@ node_modules/
 dist/
 target/
 portable/
+release/
 gui/dist/
 
 # IDE

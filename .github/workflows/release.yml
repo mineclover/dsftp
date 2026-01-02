@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ''
+          - platform: macos-latest
+            args: '--target aarch64-apple-darwin'
+          - platform: macos-latest
+            args: '--target x86_64-apple-darwin'
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: gui/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install dependencies (root)
+        run: npm ci
+
+      - name: Install dependencies (gui)
+        run: npm ci
+        working-directory: gui
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: gui
+          tagName: ${{ github.ref_name }}
+          releaseName: 'SFTP Manager ${{ github.ref_name }}'
+          releaseBody: |
+            ## Downloads
+
+            | Platform | File |
+            |----------|------|
+            | Windows (installer) | `SFTP Manager_*_x64-setup.exe` |
+            | Windows (MSI) | `SFTP Manager_*_x64_en-US.msi` |
+            | macOS (Apple Silicon) | `SFTP Manager_*_aarch64.dmg` |
+            | macOS (Intel) | `SFTP Manager_*_x64.dmg` |
+
+            ## What's New
+            - See commit history for changes
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

@@ -22,13 +22,20 @@
         "center": true
       }
     ],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": false
+    },
     "security": {
       "csp": null
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
-    "icon": ["icons/icon.ico"]
+    "targets": "all",
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "macOS": {
+      "minimumSystemVersion": "10.13"
+    }
   }
 }
