@@ -12,9 +12,13 @@ import {
   Loader2,
   AlertCircle,
   X,
-  Shield
+  Shield,
+  Folder,
+  File,
+  ChevronRight,
+  ChevronUp
 } from 'lucide-react';
-import type { Server, ActionType } from '../types';
+import type { Server, ActionType, FileEntry } from '../types';
 
 const ActionLabels: Record<ActionType, string> = {
   starting: 'Starting...',
@@ -41,6 +45,21 @@ function ServerDetail({ server, localIP, isVPN = false, onStart, onStop, onRemov
   const [logsLoading, setLogsLoading] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
+  const [showFiles, setShowFiles] = useState(false);
+  const [files, setFiles] = useState<FileEntry[]>([]);
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [filesError, setFilesError] = useState<string | null>(null);
+
+  // Container path is the SFTP root (e.g., /home/admin/files)
+  const containerPath = server.container_path || server.containerPath || `/home/${server.username}/files`;
+  const [currentPath, setCurrentPath] = useState(containerPath);
+
+  // Calculate SFTP-visible path (relative to user's home)
+  const userHome = `/home/${server.username}`;
+  const sftpPath = currentPath.startsWith(userHome)
+    ? currentPath.slice(userHome.length) || '/'
+    : currentPath;
+
   const isRunning = server.status === 'running';
   const action = server.action;
   const hasAction = !!action && !action.error;
@@ -53,6 +72,48 @@ function ServerDetail({ server, localIP, isVPN = false, onStart, onStop, onRemov
       .then(result => setLogs(result))
       .catch(() => setLogs('Failed to load logs'))
       .finally(() => setLogsLoading(false));
+  }
+
+  function loadFiles(path: string = currentPath) {
+    setShowFiles(true);
+    setFilesLoading(true);
+    setFilesError(null);
+    invoke<FileEntry[]>('list_files', { name: server.name, path })
+      .then(result => {
+        setFiles(result);
+        setCurrentPath(path);
+      })
+      .catch(err => {
+        setFilesError(String(err));
+        setFiles([]);
+      })
+      .finally(() => setFilesLoading(false));
+  }
+
+  function navigateToFolder(path: string) {
+    loadFiles(path);
+  }
+
+  function navigateUp() {
+    // Don't go above the container path (SFTP root)
+    if (currentPath === containerPath) return;
+
+    const parts = currentPath.split('/').filter(Boolean);
+    if (parts.length > 0) {
+      parts.pop();
+      const parentPath = '/' + parts.join('/');
+      // Don't go above container path
+      if (parentPath.length >= containerPath.length || containerPath.startsWith(parentPath)) {
+        loadFiles(parentPath || '/');
+      }
+    }
+  }
+
+  function formatSize(bytes: number): string {
+    if (bytes === 0) return '-';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   async function copyToClipboard(text: string, label: string) {
@@ -262,6 +323,106 @@ function ServerDetail({ server, localIP, isVPN = false, onStart, onStop, onRemov
             </button>
           </div>
         </div>
+      </div>
+
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-800 dark:text-white">
+            Files
+          </h3>
+          {showFiles && (
+            <button
+              onClick={() => loadFiles(currentPath)}
+              disabled={filesLoading || !isRunning}
+              className="p-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded disabled:opacity-50"
+              title="Refresh"
+            >
+              {filesLoading ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <RefreshCw size={16} />
+              )}
+            </button>
+          )}
+        </div>
+        {!isRunning ? (
+          <div className="text-center py-8 text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg">
+            Start the server to browse files
+          </div>
+        ) : showFiles ? (
+          <div className="space-y-2">
+            {/* Current path - show both SFTP path and system path */}
+            <div className="px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg text-sm space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 dark:text-gray-400 w-12">SFTP:</span>
+                <Folder size={14} className="text-blue-500" />
+                <span className="font-mono text-gray-700 dark:text-gray-300 flex-1">{sftpPath}</span>
+                {currentPath !== containerPath && (
+                  <button
+                    onClick={navigateUp}
+                    className="p-1 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
+                    title="Go up"
+                  >
+                    <ChevronUp size={16} />
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
+                <span className="w-12">System:</span>
+                <span className="font-mono">{currentPath}</span>
+              </div>
+            </div>
+
+            {/* File list */}
+            {filesLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 size={24} className="animate-spin text-gray-400" />
+              </div>
+            ) : filesError ? (
+              <div className="text-center py-8 text-red-500 bg-red-50 dark:bg-red-900/20 rounded-lg">
+                {filesError}
+              </div>
+            ) : files.length === 0 ? (
+              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                Empty directory
+              </div>
+            ) : (
+              <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                {files.map((file, index) => (
+                  <div
+                    key={file.path}
+                    className={`flex items-center gap-3 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700 ${
+                      index !== files.length - 1 ? 'border-b border-gray-200 dark:border-gray-700' : ''
+                    } ${file.is_dir ? 'cursor-pointer' : ''}`}
+                    onClick={() => file.is_dir && navigateToFolder(file.path)}
+                  >
+                    {file.is_dir ? (
+                      <Folder size={18} className="text-blue-500 flex-shrink-0" />
+                    ) : (
+                      <File size={18} className="text-gray-400 flex-shrink-0" />
+                    )}
+                    <span className={`flex-1 text-sm truncate ${file.is_dir ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-gray-300'}`}>
+                      {file.name}
+                    </span>
+                    {!file.is_dir && (
+                      <span className="text-xs text-gray-400">{formatSize(file.size)}</span>
+                    )}
+                    {file.is_dir && (
+                      <ChevronRight size={16} className="text-gray-400 flex-shrink-0" />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <button
+            onClick={() => loadFiles(containerPath)}
+            className="w-full py-8 text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+          >
+            Click to browse files
+          </button>
+        )}
       </div>
 
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">

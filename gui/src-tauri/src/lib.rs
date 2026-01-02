@@ -143,6 +143,14 @@ pub struct CreateResult {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
 // Docker helper functions
 fn run_command(cmd: &str, args: &[&str]) -> Result<String, String> {
     Command::new(cmd)
@@ -417,6 +425,61 @@ fn get_container_logs(name: String, lines: u32) -> String {
     }
 }
 
+#[tauri::command]
+fn list_files(name: String, path: String) -> Result<Vec<FileEntry>, String> {
+    // Only allow atmoz/sftp containers
+    if !is_sftp_container(&name) {
+        return Err("Not an SFTP container".to_string());
+    }
+
+    // Use docker exec to list files inside the container
+    let output = run_command("docker", &["exec", &name, "ls", "-la", &path])?;
+
+    let mut entries: Vec<FileEntry> = Vec::new();
+
+    for line in output.lines().skip(1) {
+        // Skip "total X" line
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 9 {
+            continue;
+        }
+
+        let permissions = parts[0];
+        let size: u64 = parts[4].parse().unwrap_or(0);
+        let name_part = parts[8..].join(" ");
+
+        // Skip . and ..
+        if name_part == "." || name_part == ".." {
+            continue;
+        }
+
+        let is_dir = permissions.starts_with('d');
+        let full_path = if path == "/" {
+            format!("/{}", name_part)
+        } else {
+            format!("{}/{}", path.trim_end_matches('/'), name_part)
+        };
+
+        entries.push(FileEntry {
+            name: name_part,
+            path: full_path,
+            is_dir,
+            size,
+        });
+    }
+
+    // Sort: directories first, then by name
+    entries.sort_by(|a, b| {
+        match (a.is_dir, b.is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        }
+    });
+
+    Ok(entries)
+}
+
 fn list_network_interfaces_internal() -> Vec<NetworkInterface> {
     let mut interfaces: Vec<NetworkInterface> = Vec::new();
 
@@ -580,6 +643,7 @@ pub fn run() {
             remove_server,
             get_container_status,
             get_container_logs,
+            list_files,
             list_network_interfaces,
             get_network_info,
             set_network_preference,

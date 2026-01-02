@@ -48,3 +48,10 @@ export interface NetworkInfo {
   preferred_interface: string | null;
   interfaces: NetworkInterface[];
 }
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+}
