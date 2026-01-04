@@ -5,11 +5,17 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
 
 jobs:
   build:
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -64,8 +70,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: gui
-          tagName: ${{ github.ref_name }}
-          releaseName: 'SFTP Manager ${{ github.ref_name }}'
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: 'SFTP Manager ${{ github.event.inputs.tag || github.ref_name }}'
           releaseBody: |
             ## Downloads
 
