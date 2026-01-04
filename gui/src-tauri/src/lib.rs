@@ -89,8 +89,16 @@ fn save_network_config(config: &NetworkConfig) {
 
 fn is_vpn_interface(name: &str) -> bool {
     let vpn_patterns = [
-        "zerotier", "tailscale", "wireguard", "wg0", "wg1",
-        "tun", "tap", "vpn", "hamachi", "radmin"
+        "zerotier",
+        "tailscale",
+        "wireguard",
+        "wg0",
+        "wg1",
+        "tun",
+        "tap",
+        "vpn",
+        "hamachi",
+        "radmin",
     ];
     let name_lower = name.to_lowercase();
     vpn_patterns.iter().any(|p| name_lower.contains(p))
@@ -153,7 +161,17 @@ pub struct FileEntry {
 
 // Docker helper functions
 fn run_command(cmd: &str, args: &[&str]) -> Result<String, String> {
-    Command::new(cmd)
+    // Set PATH explicitly for macOS to find docker
+    #[cfg(target_os = "macos")]
+    let mut command = Command::new(cmd);
+    #[cfg(target_os = "macos")]
+    {
+        command.env("PATH", "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/sbin:/usr/sbin");
+    }
+    #[cfg(not(target_os = "macos"))]
+    let mut command = Command::new(cmd);
+
+    command
         .args(args)
         .output()
         .map_err(|e| e.to_string())
@@ -168,7 +186,10 @@ fn run_command(cmd: &str, args: &[&str]) -> Result<String, String> {
 
 /// Check if a container is using atmoz/sftp image
 fn is_sftp_container(name: &str) -> bool {
-    if let Ok(output) = run_command("docker", &["inspect", "--format", "{{.Config.Image}}", name]) {
+    if let Ok(output) = run_command(
+        "docker",
+        &["inspect", "--format", "{{.Config.Image}}", name],
+    ) {
         let image = output.trim();
         return image == SFTP_IMAGE || image.starts_with(&format!("{}:", SFTP_IMAGE));
     }
@@ -249,11 +270,17 @@ fn list_servers() -> Vec<ServerInfo> {
     let stored_creds = load_credentials();
 
     // List only atmoz/sftp containers
-    let result = run_command("docker", &[
-        "ps", "-a",
-        "--filter", &format!("ancestor={}", SFTP_IMAGE),
-        "--format", "{{.Names}}|{{.Status}}|{{.Ports}}"
-    ]);
+    let result = run_command(
+        "docker",
+        &[
+            "ps",
+            "-a",
+            "--filter",
+            &format!("ancestor={}", SFTP_IMAGE),
+            "--format",
+            "{{.Names}}|{{.Status}}|{{.Ports}}",
+        ],
+    );
 
     match result {
         Ok(output) => {
@@ -261,38 +288,50 @@ fn list_servers() -> Vec<ServerInfo> {
                 return vec![];
             }
 
-            output.trim().lines().filter_map(|line| {
-                let parts: Vec<&str> = line.split('|').collect();
-                if parts.len() >= 3 {
-                    let name = parts[0].to_string();
-                    let status = if parts[1].contains("Up") { "running" } else { "stopped" };
-                    let port = extract_port(parts[2]);
-
-                    // Get stored credentials for this server
-                    let (username, password, host_path, container_path) =
-                        if let Some(creds) = stored_creds.get(&name) {
-                            (creds.username.clone(), creds.password.clone(),
-                             creds.host_path.clone(), creds.container_path.clone())
+            output
+                .trim()
+                .lines()
+                .filter_map(|line| {
+                    let parts: Vec<&str> = line.split('|').collect();
+                    if parts.len() >= 3 {
+                        let name = parts[0].to_string();
+                        let status = if parts[1].contains("Up") {
+                            "running"
                         } else {
-                            (String::new(), String::new(), String::new(), String::new())
+                            "stopped"
                         };
+                        let port = extract_port(parts[2]);
 
-                    Some(ServerInfo {
-                        name,
-                        port,
-                        host_path,
-                        container_path,
-                        username,
-                        password,
-                        status: status.to_string(),
-                        created_at: None,
-                    })
-                } else {
-                    None
-                }
-            }).collect()
-        },
-        Err(_) => vec![]
+                        // Get stored credentials for this server
+                        let (username, password, host_path, container_path) =
+                            if let Some(creds) = stored_creds.get(&name) {
+                                (
+                                    creds.username.clone(),
+                                    creds.password.clone(),
+                                    creds.host_path.clone(),
+                                    creds.container_path.clone(),
+                                )
+                            } else {
+                                (String::new(), String::new(), String::new(), String::new())
+                            };
+
+                        Some(ServerInfo {
+                            name,
+                            port,
+                            host_path,
+                            container_path,
+                            username,
+                            password,
+                            status: status.to_string(),
+                            created_at: None,
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+        Err(_) => vec![],
     }
 }
 
@@ -300,7 +339,7 @@ fn extract_port(ports_str: &str) -> u16 {
     // Parse "0.0.0.0:2222->22/tcp" format
     if let Some(start) = ports_str.find(':') {
         if let Some(end) = ports_str.find("->") {
-            if let Ok(port) = ports_str[start+1..end].parse() {
+            if let Ok(port) = ports_str[start + 1..end].parse() {
                 return port;
             }
         }
@@ -321,25 +360,36 @@ fn create_server(config: ServerConfig) -> CreateResult {
     let volume_mapping = format!("{}:{}", host_path, config.container_path);
     let user_config = format!("{}:{}:1001", config.username, config.password);
 
-    let result = run_command("docker", &[
-        "run", "-d",
-        "--name", &config.name,
-        "-p", &port_mapping,
-        "-v", &volume_mapping,
-        "--restart", "unless-stopped",
-        SFTP_IMAGE,
-        &user_config
-    ]);
+    let result = run_command(
+        "docker",
+        &[
+            "run",
+            "-d",
+            "--name",
+            &config.name,
+            "-p",
+            &port_mapping,
+            "-v",
+            &volume_mapping,
+            "--restart",
+            "unless-stopped",
+            SFTP_IMAGE,
+            &user_config,
+        ],
+    );
 
     match result {
         Ok(_) => {
             // Store credentials for later retrieval
-            store_server_credentials(&config.name, StoredCredentials {
-                username: config.username.clone(),
-                password: config.password.clone(),
-                host_path: config.host_path.clone(),
-                container_path: config.container_path.clone(),
-            });
+            store_server_credentials(
+                &config.name,
+                StoredCredentials {
+                    username: config.username.clone(),
+                    password: config.password.clone(),
+                    host_path: config.host_path.clone(),
+                    container_path: config.container_path.clone(),
+                },
+            );
 
             CreateResult {
                 success: true,
@@ -355,12 +405,12 @@ fn create_server(config: ServerConfig) -> CreateResult {
                 }),
                 error: None,
             }
-        },
+        }
         Err(e) => CreateResult {
             success: false,
             server: None,
             error: Some(e),
-        }
+        },
     }
 }
 
@@ -375,8 +425,14 @@ fn start_server(name: String) -> CommandResult {
     }
 
     match run_command("docker", &["start", &name]) {
-        Ok(_) => CommandResult { success: true, error: None },
-        Err(e) => CommandResult { success: false, error: Some(e) },
+        Ok(_) => CommandResult {
+            success: true,
+            error: None,
+        },
+        Err(e) => CommandResult {
+            success: false,
+            error: Some(e),
+        },
     }
 }
 
@@ -391,8 +447,14 @@ fn stop_server(name: String) -> CommandResult {
     }
 
     match run_command("docker", &["stop", &name]) {
-        Ok(_) => CommandResult { success: true, error: None },
-        Err(e) => CommandResult { success: false, error: Some(e) },
+        Ok(_) => CommandResult {
+            success: true,
+            error: None,
+        },
+        Err(e) => CommandResult {
+            success: false,
+            error: Some(e),
+        },
     }
 }
 
@@ -410,9 +472,15 @@ fn remove_server(name: String) -> CommandResult {
         Ok(_) => {
             // Remove stored credentials
             remove_server_credentials(&name);
-            CommandResult { success: true, error: None }
+            CommandResult {
+                success: true,
+                error: None,
+            }
+        }
+        Err(e) => CommandResult {
+            success: false,
+            error: Some(e),
         },
-        Err(e) => CommandResult { success: false, error: Some(e) },
     }
 }
 
@@ -423,7 +491,10 @@ fn get_container_status(name: String) -> String {
         return "not sftp".to_string();
     }
 
-    match run_command("docker", &["inspect", "--format", "{{.State.Status}}", &name]) {
+    match run_command(
+        "docker",
+        &["inspect", "--format", "{{.State.Status}}", &name],
+    ) {
         Ok(status) => status.trim().to_string(),
         Err(_) => "not created".to_string(),
     }
@@ -486,12 +557,10 @@ fn list_files(name: String, path: String) -> Result<Vec<FileEntry>, String> {
     }
 
     // Sort: directories first, then by name
-    entries.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
     Ok(entries)
@@ -530,26 +599,120 @@ fn list_network_interfaces_internal() -> Vec<NetworkInterface> {
 
     #[cfg(target_os = "macos")]
     {
-        // Use ifconfig to list all interfaces and their IPs
-        if let Ok(output) = run_command("sh", &["-c", "ifconfig -a"]) {
+        // Use ifconfig with better parsing
+        if let Ok(output) = run_command("ifconfig", &[]) {
             let mut current_iface = String::new();
             for line in output.lines() {
-                // Interface line starts with non-whitespace
-                if !line.starts_with('\t') && !line.starts_with(' ') && line.contains(':') {
+                let trimmed = line.trim();
+
+                // Interface name line (ends with colon and no leading whitespace in original)
+                if !line.starts_with('\t')
+                    && !line.starts_with(' ')
+                    && line.contains(':')
+                    && !line.contains("inet ")
+                {
                     current_iface = line.split(':').next().unwrap_or("").to_string();
-                } else if line.contains("inet ") && !current_iface.is_empty() {
-                    // Parse inet line: "inet 192.168.1.100 netmask ..."
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if let Some(inet_idx) = parts.iter().position(|&x| x == "inet") {
-                        if let Some(addr) = parts.get(inet_idx + 1) {
-                            if !addr.starts_with("127.") && !addr.starts_with("169.254.") {
-                                let is_vpn = is_vpn_interface(&current_iface);
+                }
+                // IP address line
+                else if trimmed.starts_with("inet ") && !current_iface.is_empty() {
+                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        let ip = parts[1].to_string();
+
+                        // Filter out unwanted IPs
+                        if !ip.starts_with("127.")
+                            && !ip.starts_with("169.254.")
+                            && ip != "0.0.0.0"
+                            && ip.contains('.')
+                        {
+                            // Ensure it's IPv4
+
+                            let is_vpn = is_vpn_interface(&current_iface);
+
+                            // Check if this IP is already added
+                            let already_added = interfaces.iter().any(|i| i.address == ip);
+                            if !already_added {
                                 interfaces.push(NetworkInterface {
                                     name: current_iface.clone(),
-                                    address: addr.to_string(),
+                                    address: ip,
                                     is_vpn,
                                 });
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also try networksetup as backup for additional interfaces
+        if let Ok(services_output) = run_command("networksetup", &["-listallnetworkservices"]) {
+            for service_line in services_output.lines().skip(1) {
+                // Skip header
+                let service_name = service_line.trim();
+                if service_name.is_empty() || service_name.contains('*') {
+                    continue;
+                }
+
+                // Get IP address for this service
+                if let Ok(ip_output) = run_command("networksetup", &["-getinfo", service_name]) {
+                    for line in ip_output.lines() {
+                        if line.starts_with("IP address: ") {
+                            let ip = line.trim_start_matches("IP address: ").to_string();
+                            if !ip.is_empty()
+                                && !ip.starts_with("127.")
+                                && !ip.starts_with("169.254.")
+                                && ip != "0.0.0.0"
+                                && ip.contains('.')
+                            {
+                                // Check if this IP is already added
+                                let already_added = interfaces.iter().any(|i| i.address == ip);
+                                if !already_added {
+                                    let is_vpn = is_vpn_interface(service_name);
+                                    interfaces.push(NetworkInterface {
+                                        name: service_name.to_string(),
+                                        address: ip,
+                                        is_vpn,
+                                    });
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also try networksetup as backup for service names
+        if let Ok(services_output) = run_command("networksetup", &["-listallnetworkservices"]) {
+            for service_line in services_output.lines().skip(1) {
+                // Skip header
+                let service_name = service_line.trim();
+                if service_name.is_empty() || service_name.contains('*') {
+                    continue;
+                }
+
+                // Get IP address for this service
+                if let Ok(ip_output) = run_command("networksetup", &["-getinfo", service_name]) {
+                    for line in ip_output.lines() {
+                        if line.starts_with("IP address: ") {
+                            let ip = line.trim_start_matches("IP address: ").to_string();
+                            if !ip.is_empty()
+                                && !ip.starts_with("127.")
+                                && !ip.starts_with("169.254.")
+                                && ip != "0.0.0.0"
+                            {
+                                // Check if this IP is already added
+                                let already_added = interfaces.iter().any(|i| i.address == ip);
+                                if !already_added {
+                                    let is_vpn = is_vpn_interface(service_name);
+                                    interfaces.push(NetworkInterface {
+                                        name: service_name.to_string(),
+                                        address: ip,
+                                        is_vpn,
+                                    });
+                                }
+                            }
+                            break;
                         }
                     }
                 }
@@ -563,7 +726,12 @@ fn list_network_interfaces_internal() -> Vec<NetworkInterface> {
             let mut current_iface = String::new();
             for line in output.lines() {
                 // Interface line: "2: eth0: <BROADCAST..."
-                if line.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                if line
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+                {
                     if let Some(name) = line.split(':').nth(1) {
                         current_iface = name.trim().to_string();
                     }
@@ -571,7 +739,10 @@ fn list_network_interfaces_internal() -> Vec<NetworkInterface> {
                     // Parse: "inet 192.168.1.100/24 brd..."
                     if let Some(addr_part) = line.split("inet ").nth(1) {
                         if let Some(addr) = addr_part.split('/').next() {
-                            if !addr.starts_with("127.") && !addr.starts_with("169.254.") && !current_iface.is_empty() {
+                            if !addr.starts_with("127.")
+                                && !addr.starts_with("169.254.")
+                                && !current_iface.is_empty()
+                            {
                                 let is_vpn = is_vpn_interface(&current_iface);
                                 interfaces.push(NetworkInterface {
                                     name: current_iface.clone(),
@@ -589,18 +760,29 @@ fn list_network_interfaces_internal() -> Vec<NetworkInterface> {
     interfaces
 }
 
-fn get_current_ip_internal(interfaces: &[NetworkInterface], config: &NetworkConfig) -> (String, Option<String>, bool) {
+fn get_current_ip_internal(
+    interfaces: &[NetworkInterface],
+    config: &NetworkConfig,
+) -> (String, Option<String>, bool) {
     // 1. Check preferred IP
     if let Some(ref preferred_ip) = config.preferred_ip {
         if let Some(iface) = interfaces.iter().find(|i| &i.address == preferred_ip) {
-            return (iface.address.clone(), Some(iface.name.clone()), iface.is_vpn);
+            return (
+                iface.address.clone(),
+                Some(iface.name.clone()),
+                iface.is_vpn,
+            );
         }
     }
 
     // 2. Check preferred interface
     if let Some(ref preferred_iface) = config.preferred_interface {
         if let Some(iface) = interfaces.iter().find(|i| &i.name == preferred_iface) {
-            return (iface.address.clone(), Some(iface.name.clone()), iface.is_vpn);
+            return (
+                iface.address.clone(),
+                Some(iface.name.clone()),
+                iface.is_vpn,
+            );
         }
     }
 
@@ -611,7 +793,11 @@ fn get_current_ip_internal(interfaces: &[NetworkInterface], config: &NetworkConf
 
     // 4. Any interface
     if let Some(iface) = interfaces.first() {
-        return (iface.address.clone(), Some(iface.name.clone()), iface.is_vpn);
+        return (
+            iface.address.clone(),
+            Some(iface.name.clone()),
+            iface.is_vpn,
+        );
     }
 
     ("127.0.0.1".to_string(), None, false)
@@ -651,13 +837,19 @@ fn set_network_preference(ip: Option<String>, interface: Option<String>) -> Comm
     }
 
     save_network_config(&config);
-    CommandResult { success: true, error: None }
+    CommandResult {
+        success: true,
+        error: None,
+    }
 }
 
 #[tauri::command]
 fn clear_network_preference() -> CommandResult {
     save_network_config(&NetworkConfig::default());
-    CommandResult { success: true, error: None }
+    CommandResult {
+        success: true,
+        error: None,
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
