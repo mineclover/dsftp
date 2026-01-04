@@ -237,7 +237,7 @@ function ServerDetail({ server, localIP, isVPN = false, onStart, onStop, onRemov
               Host
             </span>
             <div className="flex-1 flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm flex items-center gap-2">
+              <code className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded font-mono text-sm flex items-center gap-2">
                 {connectionInfo.host}
                 {isVPN && (
                   <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300">
@@ -272,7 +272,7 @@ function ServerDetail({ server, localIP, isVPN = false, onStart, onStop, onRemov
               Password
             </span>
             <div className="flex-1 flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
+              <code className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded font-mono text-sm">
                 {showPassword ? (connectionInfo.password || '') : '••••••••'}
               </code>
               <button
@@ -474,7 +474,7 @@ function InfoRow({ label, value, onCopy, copied }: InfoRowProps) {
       <span className="w-24 text-sm text-gray-500 dark:text-gray-400">
         {label}
       </span>
-      <code className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded font-mono text-sm">
+      <code className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded font-mono text-sm">
         {value}
       </code>
       <button
