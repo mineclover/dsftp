@@ -27,6 +27,7 @@ export interface Server {
   password: string;
   status: ServerStatus;
   action?: ServerAction | null;
+  bind_ip?: string | null;
 }
 
 export interface CreateResult {

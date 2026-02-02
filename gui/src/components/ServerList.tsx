@@ -1,6 +1,6 @@
-import { Play, Square, Trash2, Copy, MoreVertical, Loader2, X, AlertCircle, Shield } from 'lucide-react';
+import { Play, Square, Trash2, Copy, MoreVertical, Loader2, X, AlertCircle, Shield, WifiOff } from 'lucide-react';
 import { useState } from 'react';
-import type { Server, ActionType } from '../types';
+import type { Server, ActionType, NetworkInterface } from '../types';
 
 const ActionLabels: Record<ActionType, string> = {
   starting: 'Starting...',
@@ -12,7 +12,7 @@ const ActionLabels: Record<ActionType, string> = {
 interface ServerListProps {
   servers: Server[];
   localIP: string;
-  isVPN?: boolean;
+  networkInterfaces: NetworkInterface[];
   loading: boolean;
   onSelect: (server: Server) => void;
   onStart: (name: string) => void;
@@ -26,7 +26,7 @@ interface ServerListProps {
 function ServerList({
   servers,
   localIP,
-  isVPN = false,
+  networkInterfaces,
   loading,
   onSelect,
   onStart,
@@ -86,7 +86,7 @@ function ServerList({
               key={server.name}
               server={server}
               localIP={localIP}
-              isVPN={isVPN}
+              networkInterfaces={networkInterfaces}
               onSelect={() => onSelect(server)}
               onStart={() => onStart(server.name)}
               onStop={() => onStop(server.name)}
@@ -103,7 +103,7 @@ function ServerList({
 interface ServerCardProps {
   server: Server;
   localIP: string;
-  isVPN?: boolean;
+  networkInterfaces: NetworkInterface[];
   onSelect: () => void;
   onStart: () => void;
   onStop: () => void;
@@ -111,13 +111,33 @@ interface ServerCardProps {
   onDismissError: () => void;
 }
 
-function ServerCard({ server, localIP, isVPN = false, onSelect, onStart, onStop, onRemove, onDismissError }: ServerCardProps) {
+function ServerCard({ server, localIP, networkInterfaces, onSelect, onStart, onStop, onRemove, onDismissError }: ServerCardProps) {
   const [showMenu, setShowMenu] = useState(false);
   const isRunning = server.status === 'running';
   const action = server.action;
   const hasAction = !!action;
   const hasError = action?.error;
   const isCreating = server.status === 'creating' || action?.type === 'creating';
+  // Use server's bind_ip if available, otherwise fall back to current localIP
+  const displayIP = server.bind_ip || localIP;
+  const hostPath = server.host_path || server.hostPath || '';
+  const containerPath = server.container_path || server.containerPath || '';
+  // Check if server's bind_ip is a VPN interface
+  const isVPN = networkInterfaces.find(iface => iface.address === displayIP)?.is_vpn || false;
+  // Check if server's bind_ip is unreachable (not in current network interfaces)
+  // 0.0.0.0 means all interfaces, so it's always reachable
+  const isUnreachable = server.bind_ip && server.bind_ip !== '0.0.0.0' &&
+    !networkInterfaces.some(iface => iface.address === server.bind_ip);
+
+  const debugInfo = `Server: ${server.name}
+Host: ${displayIP}
+Port: ${server.port}
+Username: ${server.username}
+Password: ${server.password}
+Host Path: ${hostPath}
+Container Path: ${containerPath}
+SFTP Command: sftp -P ${server.port} ${server.username}@${displayIP}
+FileZilla URL: sftp://${server.username}:${server.password}@${displayIP}:${server.port}`;
 
   async function copyToClipboard(text: string) {
     await navigator.clipboard.writeText(text);
@@ -194,12 +214,18 @@ function ServerCard({ server, localIP, isVPN = false, onSelect, onStart, onStop,
             <h3 className="font-semibold text-gray-800 dark:text-white">
               {server.name}
             </h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1">
-              {server.username}@{localIP}:{server.port}
+            <p className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1 flex-wrap">
+              {server.username}@{displayIP}:{server.port}
               {isVPN && (
                 <span className="inline-flex items-center gap-0.5 text-xs px-1 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300 ml-1">
                   <Shield size={10} />
                   VPN
+                </span>
+              )}
+              {isUnreachable && (
+                <span className="inline-flex items-center gap-0.5 text-xs px-1 py-0.5 rounded bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 ml-1" title="This IP is not available on current network">
+                  <WifiOff size={10} />
+                  Unreachable
                 </span>
               )}
             </p>
@@ -236,7 +262,7 @@ function ServerCard({ server, localIP, isVPN = false, onSelect, onStart, onStop,
             {showMenu && (
               <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-10">
                 <button
-                  onClick={() => copyToClipboard(`sftp -P ${server.port} ${server.username}@${localIP}`)}
+                  onClick={() => copyToClipboard(`sftp -P ${server.port} ${server.username}@${displayIP}`)}
                   className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
                 >
                   <Copy size={14} />
@@ -248,6 +274,13 @@ function ServerCard({ server, localIP, isVPN = false, onSelect, onStart, onStop,
                 >
                   <Copy size={14} />
                   Copy Password
+                </button>
+                <button
+                  onClick={() => copyToClipboard(debugInfo)}
+                  className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                >
+                  <Copy size={14} />
+                  Copy All Info
                 </button>
                 <hr className="my-1 border-gray-200 dark:border-gray-700" />
                 <button

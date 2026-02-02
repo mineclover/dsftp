@@ -248,7 +248,7 @@ function App() {
             <ServerDetail
               server={serversWithActions.find(s => s.name === selectedServer.name) || selectedServer}
               localIP={networkInfo?.current_ip || '127.0.0.1'}
-              isVPN={networkInfo?.is_vpn || false}
+              networkInterfaces={networkInfo?.interfaces || []}
               onStart={() => handleStartServer(selectedServer.name)}
               onStop={() => handleStopServer(selectedServer.name)}
               onRemove={() => handleRemoveServer(selectedServer.name)}
@@ -259,7 +259,7 @@ function App() {
             <ServerList
               servers={serversWithActions}
               localIP={networkInfo?.current_ip || '127.0.0.1'}
-              isVPN={networkInfo?.is_vpn || false}
+              networkInterfaces={networkInfo?.interfaces || []}
               loading={loadingServers}
               onSelect={setSelectedServer}
               onStart={handleStartServer}

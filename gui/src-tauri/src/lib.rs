@@ -14,6 +14,8 @@ pub struct StoredCredentials {
     pub password: String,
     pub host_path: String,
     pub container_path: String,
+    #[serde(default)]
+    pub bind_ip: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -136,6 +138,7 @@ pub struct ServerInfo {
     pub password: String,
     pub status: String,
     pub created_at: Option<String>,
+    pub bind_ip: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -300,20 +303,27 @@ fn list_servers() -> Vec<ServerInfo> {
                         } else {
                             "stopped"
                         };
-                        let port = extract_port(parts[2]);
+                        let ports_str = parts[2];
+                        let port = extract_port(ports_str);
+                        // Extract bind IP from Docker ports info (e.g., "192.168.1.100:2222->22/tcp")
+                        let docker_bind_ip = extract_bind_ip(ports_str);
 
                         // Get stored credentials for this server
-                        let (username, password, host_path, container_path) =
+                        let (username, password, host_path, container_path, stored_bind_ip) =
                             if let Some(creds) = stored_creds.get(&name) {
                                 (
                                     creds.username.clone(),
                                     creds.password.clone(),
                                     creds.host_path.clone(),
                                     creds.container_path.clone(),
+                                    creds.bind_ip.clone(),
                                 )
                             } else {
-                                (String::new(), String::new(), String::new(), String::new())
+                                (String::new(), String::new(), String::new(), String::new(), None)
                             };
+
+                        // Use stored bind_ip if available, otherwise use Docker's bind IP
+                        let bind_ip = stored_bind_ip.or(docker_bind_ip);
 
                         Some(ServerInfo {
                             name,
@@ -324,6 +334,7 @@ fn list_servers() -> Vec<ServerInfo> {
                             password,
                             status: status.to_string(),
                             created_at: None,
+                            bind_ip,
                         })
                     } else {
                         None
@@ -345,6 +356,17 @@ fn extract_port(ports_str: &str) -> u16 {
         }
     }
     0
+}
+
+fn extract_bind_ip(ports_str: &str) -> Option<String> {
+    // Parse "192.168.1.100:2222->22/tcp" or "0.0.0.0:2222->22/tcp" format
+    if let Some(colon_pos) = ports_str.find(':') {
+        let ip = &ports_str[..colon_pos];
+        if !ip.is_empty() {
+            return Some(ip.to_string());
+        }
+    }
+    None
 }
 
 #[tauri::command]
@@ -388,6 +410,7 @@ fn create_server(config: ServerConfig) -> CreateResult {
                     password: config.password.clone(),
                     host_path: config.host_path.clone(),
                     container_path: config.container_path.clone(),
+                    bind_ip: Some(bind_ip.clone()),
                 },
             );
 
@@ -402,6 +425,7 @@ fn create_server(config: ServerConfig) -> CreateResult {
                     password: config.password,
                     status: "running".to_string(),
                     created_at: None,
+                    bind_ip: Some(bind_ip),
                 }),
                 error: None,
             }

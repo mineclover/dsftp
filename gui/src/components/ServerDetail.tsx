@@ -16,9 +16,10 @@ import {
   Folder,
   File,
   ChevronRight,
-  ChevronUp
+  ChevronUp,
+  WifiOff
 } from 'lucide-react';
-import type { Server, ActionType, FileEntry } from '../types';
+import type { Server, ActionType, FileEntry, NetworkInterface } from '../types';
 
 const ActionLabels: Record<ActionType, string> = {
   starting: 'Starting...',
@@ -30,7 +31,7 @@ const ActionLabels: Record<ActionType, string> = {
 interface ServerDetailProps {
   server: Server;
   localIP: string;
-  isVPN?: boolean;
+  networkInterfaces: NetworkInterface[];
   onStart: () => void;
   onStop: () => void;
   onRemove: () => void;
@@ -38,7 +39,7 @@ interface ServerDetailProps {
   onDismissError: () => void;
 }
 
-function ServerDetail({ server, localIP, isVPN = false, onStart, onStop, onRemove, onBack, onDismissError }: ServerDetailProps) {
+function ServerDetail({ server, localIP, networkInterfaces, onStart, onStop, onRemove, onBack, onDismissError }: ServerDetailProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState('');
@@ -64,6 +65,14 @@ function ServerDetail({ server, localIP, isVPN = false, onStart, onStop, onRemov
   const action = server.action;
   const hasAction = !!action && !action.error;
   const hasError = action?.error;
+  // Use server's bind_ip if available, otherwise fall back to current localIP
+  const displayIP = server.bind_ip || localIP;
+  // Check if server's bind_ip is a VPN interface
+  const isVPN = networkInterfaces.find(iface => iface.address === displayIP)?.is_vpn || false;
+  // Check if server's bind_ip is unreachable (not in current network interfaces)
+  // 0.0.0.0 means all interfaces, so it's always reachable
+  const isUnreachable = server.bind_ip && server.bind_ip !== '0.0.0.0' &&
+    !networkInterfaces.some(iface => iface.address === server.bind_ip);
 
   function loadLogs() {
     setShowLogs(true);
@@ -122,14 +131,29 @@ function ServerDetail({ server, localIP, isVPN = false, onStart, onStop, onRemov
     setTimeout(() => setCopied(null), 2000);
   }
 
+  const hostPath = server.host_path || server.hostPath || '';
+  const containerPathValue = server.container_path || server.containerPath || '';
+
   const connectionInfo = {
-    host: localIP,
+    host: displayIP,
     port: server.port,
     username: server.username,
     password: server.password,
-    command: `sftp -P ${server.port} ${server.username}@${localIP}`,
-    url: `sftp://${server.username}:${server.password}@${localIP}:${server.port}`
+    hostPath: hostPath,
+    containerPath: containerPathValue,
+    command: `sftp -P ${server.port} ${server.username}@${displayIP}`,
+    url: `sftp://${server.username}:${server.password}@${displayIP}:${server.port}`
   };
+
+  const debugInfo = `Server: ${server.name}
+Host: ${displayIP}
+Port: ${server.port}
+Username: ${server.username}
+Password: ${server.password}
+Host Path: ${hostPath}
+Container Path: ${containerPathValue}
+SFTP Command: ${connectionInfo.command}
+FileZilla URL: ${connectionInfo.url}`;
 
   return (
     <div>
@@ -237,12 +261,18 @@ function ServerDetail({ server, localIP, isVPN = false, onStart, onStop, onRemov
               Host
             </span>
             <div className="flex-1 flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded font-mono text-sm flex items-center gap-2">
+              <code className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded font-mono text-sm flex items-center gap-2 flex-wrap">
                 {connectionInfo.host}
                 {isVPN && (
                   <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300">
                     <Shield size={10} />
                     VPN
+                  </span>
+                )}
+                {isUnreachable && (
+                  <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300" title="This IP is not available on current network">
+                    <WifiOff size={10} />
+                    Unreachable
                   </span>
                 )}
               </code>
@@ -292,6 +322,21 @@ function ServerDetail({ server, localIP, isVPN = false, onStart, onStop, onRemov
               )}
             </div>
           </div>
+
+          <hr className="my-3 border-gray-200 dark:border-gray-700" />
+
+          <InfoRow
+            label="Host Path"
+            value={connectionInfo.hostPath}
+            onCopy={() => copyToClipboard(connectionInfo.hostPath, 'hostPath')}
+            copied={copied === 'hostPath'}
+          />
+          <InfoRow
+            label="Container"
+            value={connectionInfo.containerPath}
+            onCopy={() => copyToClipboard(connectionInfo.containerPath, 'containerPath')}
+            copied={copied === 'containerPath'}
+          />
         </div>
 
         <hr className="my-4 border-gray-200 dark:border-gray-700" />
@@ -320,6 +365,16 @@ function ServerDetail({ server, localIP, isVPN = false, onStart, onStop, onRemov
               }`}
             >
               {copied === 'url' ? 'Copied!' : 'FileZilla URL'}
+            </button>
+            <button
+              onClick={() => copyToClipboard(debugInfo, 'debug')}
+              className={`flex-1 px-4 py-2 text-sm rounded-lg border ${
+                copied === 'debug'
+                  ? 'bg-green-50 border-green-300 text-green-700 dark:bg-green-900/30 dark:border-green-700 dark:text-green-400'
+                  : 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+              }`}
+            >
+              {copied === 'debug' ? 'Copied!' : 'Copy All'}
             </button>
           </div>
         </div>
